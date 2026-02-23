@@ -74,7 +74,7 @@
                         
                         // Mavi kanal baskınlık formülü (Alamet-i Farika)
                         let diff = pixel[2] - (pixel[0] + pixel[1]) / 2;
-                        bits += (diff > 1.5) ? "1" : "0";
+                        bits += (diff > 0.8) ? "1" : "0";
                     }
                 }
 
