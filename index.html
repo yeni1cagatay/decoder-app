@@ -1,76 +1,143 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Luma Pulse Decoder</title>
+    <title>Shop the Show - Noise Decoder</title>
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <script src="https://docs.opencv.org/4.5.4/opencv.js" type="text/javascript"></script>
     <style>
-        body { margin: 0; background: #000; color: #fff; font-family: sans-serif; text-align: center; }
-        video { width: 100%; height: auto; }
-        #status { font-size: 24px; font-weight: bold; margin-top: 20px; color: #0f0; }
-        #btn { display:none; margin: 20px auto; padding: 20px 40px; background: white; color: black; border-radius: 10px; font-weight: bold; }
-        canvas { display: none; }
+        body { margin: 0; background: #000; color: #0f0; font-family: 'Courier New', monospace; text-align: center; overflow: hidden; }
+        #container { position: relative; width: 100vw; height: 100vh; }
+        video { width: 100%; height: 100%; object-fit: cover; opacity: 0.8; }
+        #overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+                   width: 250px; height: 250px; border: 2px solid #0f0; box-shadow: 0 0 15px #0f0; pointer-events: none; }
+        #status-bar { position: absolute; top: 20px; width: 100%; font-size: 14px; background: rgba(0,0,0,0.6); padding: 5px; }
+        #result-card { position: absolute; bottom: 40px; left: 10%; width: 80%; background: #fff; color: #000; 
+                       padding: 20px; border-radius: 20px; display: none; transition: 0.3s; }
+        button { background: #000; color: #fff; border: none; padding: 15px 30px; border-radius: 10px; font-weight: bold; width: 100%; margin-top: 10px; }
     </style>
 </head>
 <body>
-    <video id="v" autoplay playsinline></video>
-    <canvas id="c"></canvas>
-    <div id="status">VİDEOYA ODAKLAN...</div>
-    <div id="btn" onclick="openStore()">SATIN AL</div>
+
+<div id="container">
+    <div id="status-bar">Sistem Başlatılıyor...</div>
+    <video id="videoInput" autoplay playsinline></video>
+    <div id="overlay">VİDEOYA ODAKLAN</div>
+    
+    <div id="result-card">
+        <h2 id="brand-name">Marka Bulundu!</h2>
+        <button id="shop-btn">HEMEN SATIN AL</button>
+    </div>
+</div>
 
 <script>
-    const video = document.getElementById('v');
-    const canvas = document.getElementById('c');
-    const ctx = canvas.getContext('2d');
-    const status = document.getElementById('status');
-    const btn = document.getElementById('btn');
-    
-    let lastLuma = 0;
-    let peaks = [];
-    let currentLink = "";
+    const brandData = {
+        1010: { name: "NIKE", url: "https://www.nike.com/tr/" },
+        2020: { name: "ADIDAS", url: "https://www.adidas.com.tr/tr" },
+        3030: { name: "SNEAKS UP", url: "https://www.sneaksup.com/" }
+    };
 
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then(s => video.srcObject = s);
-
-    function analyze() {
-        canvas.width = video.videoWidth / 4;
-        canvas.height = video.videoHeight / 4;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        
-        // Merkezin parlaklığını ölç
-        const data = ctx.getImageData(canvas.width/2, canvas.height/2, 10, 10).data;
-        let avgLuma = 0;
-        for(let i=0; i<data.length; i+=4) {
-            avgLuma += (data[i] + data[i+1] + data[i+2]) / 3;
-        }
-        avgLuma /= (data.length / 4);
-
-        // Parlaklık değişimini takip et (Nabız yakalama)
-        if (avgLuma > lastLuma + 1) { // Eğer ışık arttıysa
-            peaks.push(Date.now());
-        }
-        lastLuma = avgLuma;
-
-        // Son 1 saniyedeki tepe noktalarını say (Frekansı bul)
-        const now = Date.now();
-        peaks = peaks.filter(p => now - p < 1000);
-        let freq = peaks.length;
-
-        // Marka Tespit Mantığı
-        if (freq >= 8 && freq <= 12) { updateUI("NIKE", "https://nike.com"); }
-        else if (freq >= 4 && freq <= 6) { updateUI("ADIDAS", "https://adidas.com"); }
-        else if (freq >= 1 && freq <= 3) { updateUI("SNEAKS UP", "https://sneaksup.com"); }
-        
-        requestAnimationFrame(analyze);
+    // Python'daki np.random.seed(seed) mantığının JavaScript versiyonu
+    function seededRandom(seed) {
+        let x = Math.sin(seed++) * 10000;
+        return x - Math.floor(x);
     }
 
-    function updateUI(name, url) {
-        status.innerText = "TESPİT EDİLDİ: " + name;
-        btn.style.display = "block";
-        currentLink = url;
+    function generateMask(seed, rows, cols) {
+        let mask = new cv.Mat(rows, cols, cv.CV_32F);
+        let s = seed;
+        for (let i = 0; i < rows; i++) {
+            for (let j = 0; j < cols; j++) {
+                // +1 veya -1 üret (Python'daki gibi)
+                let val = seededRandom(s++) > 0.5 ? 1 : -1;
+                mask.floatPtr(i, j)[0] = val;
+            }
+        }
+        return mask;
     }
 
-    function openStore() { window.open(currentLink, '_blank'); }
-    
-    video.onplay = () => analyze();
+    let video = document.getElementById('videoInput');
+    let status = document.getElementById('status-bar');
+    let card = document.getElementById('result-card');
+    let brandText = document.getElementById('brand-name');
+    let shopBtn = document.getElementById('shop-btn');
+
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", focusMode: "continuous" } })
+        .then(stream => { video.srcObject = stream; });
+
+    cv['onRuntimeInitialized'] = () => {
+        status.innerText = "Sistem Hazır. Ekrandaki videoya yaklaş.";
+        startAnalysis();
+    };
+
+    function startAnalysis() {
+        let cap = new cv.VideoCapture(video);
+        let src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
+        let gray = new cv.Mat();
+        let blurred = new cv.Mat();
+        let highFreq = new cv.Mat();
+        
+        // Maskeleri önceden hazırla (Hücre boyutunu 200x200 yapıyoruz, mobil performans için)
+        const analysisSize = 200;
+        let masks = {};
+        Object.keys(brandData).forEach(seed => {
+            masks[seed] = generateMask(parseInt(seed), analysisSize, analysisSize);
+        });
+
+        function process() {
+            try {
+                cap.read(src);
+                // Merkez bölgeyi kırp (ROI)
+                let rect = new cv.Rect((src.cols/2) - (analysisSize/2), (src.rows/2) - (analysisSize/2), analysisSize, analysisSize);
+                let roi = src.roi(rect);
+                
+                cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY);
+                gray.convertTo(gray, cv.CV_32F);
+                
+                // High-pass filter (Görüntüyü temizle, gürültüyü bırak)
+                cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
+                cv.subtract(gray, blurred, highFreq);
+
+                let bestID = null;
+                let maxCorr = -1;
+
+                // Korelasyon Kontrolü
+                Object.keys(masks).forEach(seed => {
+                    let corr = 0;
+                    // Basitleştirilmiş nokta çarpımı
+                    for (let i = 0; i < analysisSize; i+=5) { // Performans için 5 pikselde bir bak
+                        for (let j = 0; j < analysisSize; j+=5) {
+                            corr += highFreq.floatPtr(i, j)[0] * masks[seed].floatPtr(i, j)[0];
+                        }
+                    }
+                    
+                    if (corr > maxCorr) {
+                        maxCorr = corr;
+                        bestID = seed;
+                    }
+                });
+
+                // Eşik değeri (MVP için deneysel bir değer)
+                if (maxCorr > 800) { 
+                    showUI(bestID);
+                } else {
+                    status.innerText = "Sinyal Aranıyor... (Güç: " + Math.round(maxCorr) + ")";
+                }
+
+                roi.delete();
+            } catch (e) { console.log(e); }
+            requestAnimationFrame(process);
+        }
+        process();
+    }
+
+    function showUI(id) {
+        let item = brandData[id];
+        brandText.innerText = item.name;
+        card.style.display = "block";
+        shopBtn.onclick = () => window.open(item.url, '_blank');
+        status.innerText = "MARKA BULUNDU!";
+    }
 </script>
 </body>
 </html>
