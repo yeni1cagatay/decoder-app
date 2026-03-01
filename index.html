@@ -1,72 +1,136 @@
 <!DOCTYPE html>
-<html>
+<html lang="tr">
 <head>
-    <title>Light Scanner Decoder</title>
+    <title>Shop the Show - Tiling Noise Decoder</title>
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <!-- OpenCV.js: Görüntü işleme motoru -->
+    <script src="https://docs.opencv.org/4.5.4/opencv.js" type="text/javascript"></script>
     <style>
-        body { margin: 0; background: #000; color: #fff; font-family: sans-serif; text-align: center; }
-        video { width: 100%; height: auto; border-bottom: 2px solid #333; }
-        #status { font-size: 20px; font-weight: bold; margin-top: 20px; color: #0f0; }
-        #btn { display:none; margin: 20px auto; padding: 20px; background: white; color: black; border-radius: 15px; font-weight: bold; width: 80%; }
-        canvas { display: none; }
+        body { margin: 0; background: #000; color: #0f0; font-family: 'Courier New', monospace; text-align: center; overflow: hidden; }
+        #container { position: relative; width: 100vw; height: 100vh; }
+        video { width: 100%; height: 100%; object-fit: cover; opacity: 0.5; }
+        
+        /* Tarama Vizörü */
+        #scanner-aim { 
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 256px; height: 256px; border: 2px solid #0f0;
+            box-shadow: 0 0 20px #0f0; border-radius: 5px; pointer-events: none;
+        }
+        #scanner-aim::after {
+            content: "256x256 TILE SCANNING..."; position: absolute; bottom: -25px; left: 0; width: 100%; font-size: 10px;
+        }
+
+        /* Ürün Kartı */
+        #result-card { 
+            position: absolute; bottom: 40px; left: 10%; width: 80%; 
+            background: white; color: black; padding: 20px; border-radius: 20px; 
+            display: none; box-shadow: 0 0 30px #0f0; animation: slideUp 0.4s ease;
+        }
+        @keyframes slideUp { from { transform: translateY(100px); } to { transform: translateY(0); } }
+        
+        #shop-btn { 
+            background: #000; color: #fff; border: none; padding: 15px; 
+            border-radius: 10px; font-weight: bold; width: 100%; font-size: 18px;
+        }
+        #status { position: absolute; top: 20px; font-size: 14px; background: rgba(0,0,0,0.8); padding: 5px 15px; border-radius: 20px; }
     </style>
 </head>
 <body>
-    <video id="v" autoplay playsinline></video>
-    <canvas id="c"></canvas>
-    <div id="status">SİNYAL ARANIYOR...</div>
-    <div id="btn" onclick="openStore()">SATIN AL</div>
+
+<div id="container">
+    <div id="status">Kamera Hazırlanıyor...</div>
+    <video id="videoInput" autoplay playsinline></video>
+    <div id="scanner-aim"></div>
+    
+    <div id="result-card">
+        <h2 id="brand-name">MARKA BULUNDU!</h2>
+        <button id="shop-btn">HEMEN SATIN AL</button>
+    </div>
+</div>
 
 <script>
-    const video = document.getElementById('v');
-    const canvas = document.getElementById('c');
-    const ctx = canvas.getContext('2d');
-    const status = document.getElementById('status');
-    const btn = document.getElementById('btn');
-    let currentURL = "";
+    // --- VERİTABANI: Colab'daki ID'lerle aynı ---
+    const brandData = {
+        1010: { name: "NIKE", url: "https://www.nike.com/tr/" },
+        2020: { name: "ADIDAS", url: "https://www.adidas.com.tr/tr" },
+        3030: { name: "SNEAKS UP", url: "https://www.sneaksup.com/" }
+    };
 
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then(s => video.srcObject = s);
-
-    function getAvgLight(x, y, w, h) {
-        const data = ctx.getImageData(x, y, w, h).data;
-        let sum = 0;
-        for(let i=0; i<data.length; i+=4) sum += (data[i] + data[i+1] + data[i+2]) / 3;
-        return sum / (data.length / 4);
+    // Python np.random.seed ile birebir aynı çalışan gürültü üretici
+    function seededRandom(seed) {
+        let x = Math.sin(seed++) * 10000;
+        return x - Math.floor(x);
     }
 
-    function scan() {
-        if(video.paused || video.ended) return;
-        // Hız için görüntüyü küçük bir tuvale çiziyoruz
-        canvas.width = 100; canvas.height = 75;
-        ctx.drawImage(video, 0, 0, 100, 75);
+    let video = document.getElementById('videoInput');
+    let status = document.getElementById('status');
+    let card = document.getElementById('result-card');
+    let brandText = document.getElementById('brand-name');
+    let shopBtn = document.getElementById('shop-btn');
 
-        // Ekranın Sol Üst ve Sağ Üst ışığını ölç
-        let leftSide = getAvgLight(0, 0, 40, 30);
-        let rightSide = getAvgLight(60, 0, 40, 30);
-        
-        // Karşılaştırma yap
-        let diff = leftSide - rightSide;
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false })
+        .then(stream => { video.srcObject = stream; })
+        .catch(err => { status.innerText = "Kamera Hatası!"; });
 
-        if (diff > 5) { // Sol taraf daha parlaksa
-            update("NIKE", "https://nike.com/tr");
-        } else if (diff < -5) { // Sağ taraf daha parlaksa
-            update("ADIDAS", "https://adidas.com.tr");
-        } else if (leftSide > 150 && rightSide > 150) { // Her ikisi de çok parlaksa
-            update("SNEAKS UP", "https://sneaksup.com");
+    cv['onRuntimeInitialized'] = () => {
+        status.innerText = "SİSTEM AKTİF: Videoya Odaklan";
+        processVideo();
+    };
+
+    function processVideo() {
+        let cap = new cv.VideoCapture(video);
+        let src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
+        let gray = new cv.Mat();
+        let blurred = new cv.Mat();
+        let highFreq = new cv.Mat();
+
+        const TILE_SIZE = 256; // Videoya gömdüğümüz orijinal blok boyutu
+
+        function scan() {
+            try {
+                cap.read(src);
+                
+                // Kameranın tam merkezinden 256x256'lık bir 'Tile' kesiyoruz
+                let rect = new cv.Rect((src.cols/2) - (TILE_SIZE/2), (src.rows/2) - (TILE_SIZE/2), TILE_SIZE, TILE_SIZE);
+                let roi = src.roi(rect);
+                
+                cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY);
+                gray.convertTo(gray, cv.CV_32F);
+                
+                // High-Pass Filter: Videoyu sil, esnetilmemiş gürültüyü bırak
+                cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
+                cv.subtract(gray, blurred, highFreq);
+
+                // Marka eşleşme kontrolü
+                [1010, 2020, 3030].forEach(seed => {
+                    let score = 0;
+                    let s = seed;
+                    // Noktasal korelasyon (Pikselleri tek tek çarpıyoruz)
+                    for (let i = 0; i < TILE_SIZE; i += 8) { // Hız için 8 pikselde bir örnekle
+                        for (let j = 0; j < TILE_SIZE; j += 8) {
+                            let maskVal = seededRandom(s++) > 0.5 ? 1 : -1;
+                            score += highFreq.floatPtr(i, j)[0] * maskVal;
+                        }
+                    }
+
+                    // HASSASİYET EŞİĞİ: 1500 (Döşeme mantığında sinyal çok daha güçlüdür)
+                    if (score > 1500) {
+                        let item = brandData[seed];
+                        brandText.innerText = item.name;
+                        card.style.display = "block";
+                        shopBtn.onclick = () => window.open(item.url, '_blank');
+                        status.innerText = "TESPİT EDİLDİ: " + item.name;
+                    }
+                });
+
+                roi.delete();
+            } catch (err) { }
+            requestAnimationFrame(scan);
         }
-
-        requestAnimationFrame(scan);
+        scan();
     }
-
-    function update(name, url) {
-        status.innerText = "TESPİT: " + name;
-        btn.style.display = "block";
-        btn.innerText = name + " SATIN AL";
-        currentURL = url;
-    }
-
-    function openStore() { window.open(currentURL, '_blank'); }
-    video.onplay = () => scan();
 </script>
+
 </body>
 </html>
