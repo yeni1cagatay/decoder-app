@@ -1,144 +1,80 @@
 <!DOCTYPE html>
 <html lang="tr">
 <head>
-    <title>Shop the Show - Pro Decoder</title>
+    <title>Shop the Show - Nike Decoder</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <script src="https://docs.opencv.org/4.5.4/opencv.js" type="text/javascript"></script>
+    <script src="https://docs.opencv.org/4.5.4/opencv.js"></script>
     <style>
-        body { margin: 0; background: #000; color: #0f0; font-family: 'Courier New', monospace; text-align: center; overflow: hidden; }
-        #container { position: relative; width: 100vw; height: 100vh; }
-        video { width: 100%; height: 100%; object-fit: cover; opacity: 0.5; }
-        #scanner-aim { 
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            width: 256px; height: 256px; border: 2px solid #0f0;
-            box-shadow: 0 0 30px #0f0; border-radius: 10px; pointer-events: none;
-        }
-        #result-card { 
+        body { margin: 0; background: #000; color: #fff; font-family: sans-serif; text-align: center; overflow: hidden; }
+        video { width: 100%; height: 100vh; object-fit: cover; opacity: 0.5; }
+        #status { position: absolute; top: 20px; width: 100%; color: #0f0; font-weight: bold; font-size: 20px; }
+        #nike-card { 
             position: absolute; bottom: 50px; left: 10%; width: 80%; 
             background: white; color: black; padding: 25px; border-radius: 25px; 
-            display: none; box-shadow: 0 0 40px rgba(0,255,0,1);
+            display: none; box-shadow: 0 0 30px #0f0; 
         }
-        #shop-btn { 
-            background: #000; color: #fff; border: none; padding: 18px; 
-            border-radius: 12px; font-weight: bold; width: 100%; font-size: 20px;
-        }
-        #status { position: absolute; top: 30px; font-size: 14px; background: rgba(0,0,0,0.85); padding: 8px 20px; border-radius: 25px; border: 1px solid #0f0; width: 80%; left: 10%; }
+        button { background: #000; color: #fff; border: none; padding: 15px 30px; border-radius: 10px; font-weight: bold; font-size: 20px; width: 100%; }
     </style>
 </head>
 <body>
-
-<div id="container">
-    <div id="status">SİNYAL ARANIYOR...</div>
-    <video id="videoInput" autoplay playsinline></video>
-    <div id="scanner-aim"></div>
-    <div id="result-card">
-        <h1 id="brand-name" style="margin:0 0 15px 0;">MARKET</h1>
-        <button id="shop-btn">HEMEN SATIN AL</button>
+    <div id="status">NIKE SİNYALİ ARANIYOR...</div>
+    <video id="v" autoplay playsinline></video>
+    
+    <div id="nike-card">
+        <h2 style="margin-top:0;">NIKE ÜRÜNÜ BULUNDU!</h2>
+        <button onclick="window.open('https://nike.com/tr', '_blank')">ŞİMDİ SATIN AL</button>
     </div>
-</div>
 
 <script>
-    const brandData = {
-        1010: { name: "NIKE", url: "https://www.nike.com/tr/" },
-        2020: { name: "ADIDAS", url: "https://www.adidas.com.tr/tr" },
-        3030: { name: "SNEAKS UP", url: "https://www.sneaksup.com/" }
-    };
+    let video = document.getElementById('v');
+    let status = document.getElementById('status');
+    let card = document.getElementById('nike-card');
 
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then(s => video.srcObject = s);
+
+    // Senin gönderdiğin noise.png'nin dijital DNA'sı
     function seededRandom(seed) {
         let x = Math.sin(seed++) * 10000;
         return x - Math.floor(x);
     }
 
-    let video = document.getElementById('videoInput');
-    let status = document.getElementById('status');
-    let card = document.getElementById('result-card');
-    let brandText = document.getElementById('brand-name');
-    let shopBtn = document.getElementById('shop-btn');
-
-    // KARARLILIK SİSTEMİ İÇİN DEĞİŞKENLER
-    let detectionHistory = []; // Son tespitleri tutar
-    const HISTORY_SIZE = 5;    // Son 5 kareye bak
-
-    navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: "environment", width: 1280, height: 720 }, 
-        audio: false 
-    }).then(stream => { video.srcObject = stream; });
-
     cv['onRuntimeInitialized'] = () => {
-        status.innerText = "SİSTEM AKTİF: Videoya Odaklan";
-        processVideo();
-    };
-
-    function processVideo() {
         let cap = new cv.VideoCapture(video);
         let src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
         let gray = new cv.Mat();
         let blurred = new cv.Mat();
         let highFreq = new cv.Mat();
-        const TILE_SIZE = 256;
 
-        function scan() {
+        function detect() {
             try {
                 cap.read(src);
-                let rect = new cv.Rect((src.cols/2) - (TILE_SIZE/2), (src.rows/2) - (TILE_SIZE/2), TILE_SIZE, TILE_SIZE);
-                let roi = src.roi(rect);
-                cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY);
+                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
                 gray.convertTo(gray, cv.CV_32F);
+                
+                // Görüntüyü temizle (Filtreleme)
                 cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
                 cv.subtract(gray, blurred, highFreq);
 
-                let currentBestID = null;
-                let maxScore = -1;
-
-                [1010, 2020, 3030].forEach(seed => {
-                    let score = 0;
-                    let s = seed;
-                    for (let i = 0; i < TILE_SIZE; i += 10) { // Daha hızlı örnekleme
-                        for (let j = 0; j < TILE_SIZE; j += 10) {
-                            let maskVal = seededRandom(s++) > 0.5 ? 1 : -1;
-                            score += highFreq.floatPtr(i, j)[0] * maskVal;
-                        }
-                    }
-                    if (score > maxScore) {
-                        maxScore = score;
-                        currentBestID = seed;
-                    }
-                });
-
-                // GÜVENLİK KONTROLÜ
-                // 1. Eşik Değeri (Threshold) 1200'e yükseltildi
-                if (maxScore > 1200) {
-                    detectionHistory.push(currentBestID);
-                } else {
-                    detectionHistory.push(null);
-                    if (detectionHistory.length > 20) card.style.display = "none"; // Sinyal kesilirse kartı gizle
-                }
-
-                if (detectionHistory.length > HISTORY_SIZE) detectionHistory.shift();
-
-                // 2. Kararlılık Kontrolü: Son 5 karenin 4'ünde aynı ID olmalı
-                let counts = {};
-                detectionHistory.forEach(id => { if(id) counts[id] = (counts[id] || 0) + 1; });
+                let score = 0;
+                let seed = 1010; // Nike anahtarı
                 
-                let stableID = Object.keys(counts).find(id => counts[id] >= 4);
-
-                if (stableID) {
-                    let item = brandData[stableID];
-                    brandText.innerText = item.name;
-                    card.style.display = "block";
-                    shopBtn.onclick = () => window.open(item.url, '_blank');
-                    status.innerText = "TESPİT EDİLDİ: " + item.name;
-                } else {
-                    status.innerText = "SİNYAL ARANIYOR... (Güç: " + Math.round(maxScore) + ")";
+                // Merkezin etrafında 100 piksellik bir alanı senin deseninle çarpıştır
+                for(let i=0; i<100; i++) {
+                    let maskVal = seededRandom(seed++) > 0.5 ? 1 : -1;
+                    score += highFreq.floatPtr(100+i, 100+i)[0] * maskVal;
                 }
 
-                roi.delete();
-            } catch (err) { }
-            requestAnimationFrame(scan);
+                // SİNYAL GÜCÜ: Eğer 400'ü geçerse Nike butonu açılır
+                if (score > 400) { 
+                    status.innerText = "TESPİT EDİLDİ!";
+                    card.style.display = "block";
+                }
+            } catch(e) {}
+            requestAnimationFrame(detect);
         }
-        scan();
-    }
+        detect();
+    };
 </script>
 </body>
 </html>
