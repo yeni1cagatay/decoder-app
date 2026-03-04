@@ -1,43 +1,39 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html>
 <head>
-    <title>Shop the Show - Nike Decoder</title>
-    <meta charset="UTF-8">
+    <title>Macro Noise Decoder</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <script src="https://docs.opencv.org/4.5.4/opencv.js"></script>
     <style>
-        body { margin: 0; background: #000; color: #fff; font-family: sans-serif; text-align: center; overflow: hidden; }
+        body { margin: 0; background: #000; color: #0f0; font-family: monospace; text-align: center; overflow: hidden; }
         video { width: 100%; height: 100vh; object-fit: cover; opacity: 0.5; }
-        #status { position: absolute; top: 20px; width: 100%; color: #0f0; font-weight: bold; font-size: 20px; }
-        #nike-card { 
-            position: absolute; bottom: 50px; left: 10%; width: 80%; 
-            background: white; color: black; padding: 25px; border-radius: 25px; 
-            display: none; box-shadow: 0 0 30px #0f0; 
-        }
-        button { background: #000; color: #fff; border: none; padding: 15px 30px; border-radius: 10px; font-weight: bold; font-size: 20px; width: 100%; }
+        #status { position: absolute; top: 20px; width: 100%; font-size: 20px; font-weight: bold; }
+        #result { position: absolute; bottom: 50px; left: 10%; width: 80%; background: white; color: black; padding: 20px; border-radius: 20px; display: none; }
+        button { background: #000; color: #fff; border: none; padding: 15px; width: 100%; border-radius: 10px; font-weight: bold; }
     </style>
 </head>
 <body>
-    <div id="status">NIKE SİNYALİ ARANIYOR...</div>
+    <div id="status">SİNYAL ARANIYOR...</div>
     <video id="v" autoplay playsinline></video>
-    
-    <div id="nike-card">
-        <h2 style="margin-top:0;">NIKE ÜRÜNÜ BULUNDU!</h2>
-        <button onclick="window.open('https://nike.com/tr', '_blank')">ŞİMDİ SATIN AL</button>
+    <div id="result">
+        <h2 id="brand">MARKA</h2>
+        <button id="btn">SATIN AL</button>
     </div>
 
 <script>
-    let video = document.getElementById('v');
-    let status = document.getElementById('status');
-    let card = document.getElementById('nike-card');
+    const brandData = { 1010: "NIKE", 2020: "ADIDAS", 3030: "SNEAKS UP" };
+    const urlData = { 1010: "https://nike.com", 2020: "https://adidas.com", 3030: "https://sneaksup.com" };
 
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then(s => video.srcObject = s);
-
-    // Senin gönderdiğin noise.png'nin dijital DNA'sı
     function seededRandom(seed) {
         let x = Math.sin(seed++) * 10000;
         return x - Math.floor(x);
     }
+
+    let video = document.getElementById('v');
+    let status = document.getElementById('status');
+    let res = document.getElementById('result');
+
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then(s => video.srcObject = s);
 
     cv['onRuntimeInitialized'] = () => {
         let cap = new cv.VideoCapture(video);
@@ -45,32 +41,36 @@
         let gray = new cv.Mat();
         let blurred = new cv.Mat();
         let highFreq = new cv.Mat();
-
+        
         function detect() {
-            try {
-                cap.read(src);
-                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-                gray.convertTo(gray, cv.CV_32F);
-                
-                // Görüntüyü temizle (Filtreleme)
-                cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
-                cv.subtract(gray, blurred, highFreq);
+            cap.read(src);
+            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+            // Macro analiz için görüntüyü küçültüyoruz (Böylece büyük noktalar birleşir)
+            let small = new cv.Mat();
+            cv.resize(gray, small, new cv.Size(160, 90)); 
+            small.convertTo(small, cv.CV_32F);
 
+            cv.GaussianBlur(small, blurred, new cv.Size(3, 3), 0);
+            cv.subtract(small, blurred, highFreq);
+
+            [1010, 2020, 3030].forEach(seed => {
                 let score = 0;
-                let seed = 1010; // Nike anahtarı
-                
-                // Merkezin etrafında 100 piksellik bir alanı senin deseninle çarpıştır
-                for(let i=0; i<100; i++) {
-                    let maskVal = seededRandom(seed++) > 0.5 ? 1 : -1;
-                    score += highFreq.floatPtr(100+i, 100+i)[0] * maskVal;
+                let s = seed;
+                // Sadece merkeze odaklan (40x40 macro alan)
+                for(let i=0; i<40; i++) {
+                    for(let j=0; j<40; j++) {
+                        let maskVal = seededRandom(s++) > 0.5 ? 1 : -1;
+                        score += highFreq.floatPtr(20+i, 60+j)[0] * maskVal;
+                    }
                 }
 
-                // SİNYAL GÜCÜ: Eğer 400'ü geçerse Nike butonu açılır
-                if (score > 400) { 
+                if (score > 400) { // MACRO EŞİĞİ
+                    document.getElementById('brand').innerText = brandData[seed];
+                    res.style.display = "block";
+                    document.getElementById('btn').onclick = () => window.open(urlData[seed]);
                     status.innerText = "TESPİT EDİLDİ!";
-                    card.style.display = "block";
                 }
-            } catch(e) {}
+            });
             requestAnimationFrame(detect);
         }
         detect();
