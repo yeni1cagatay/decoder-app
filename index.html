@@ -1,80 +1,62 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Macro Noise Decoder</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <script src="https://docs.opencv.org/4.5.4/opencv.js"></script>
-    <style>
-        body { margin: 0; background: #000; color: #0f0; font-family: monospace; text-align: center; overflow: hidden; }
-        video { width: 100%; height: 100vh; object-fit: cover; opacity: 0.5; }
-        #status { position: absolute; top: 20px; width: 100%; font-size: 20px; font-weight: bold; }
-        #result { position: absolute; bottom: 50px; left: 10%; width: 80%; background: white; color: black; padding: 20px; border-radius: 20px; display: none; }
-        button { background: #000; color: #fff; border: none; padding: 15px; width: 100%; border-radius: 10px; font-weight: bold; }
-    </style>
-</head>
-<body>
-    <div id="status">SİNYAL ARANIYOR...</div>
-    <video id="v" autoplay playsinline></video>
-    <div id="result">
-        <h2 id="brand">MARKA</h2>
-        <button id="btn">SATIN AL</button>
-    </div>
+import cv2
+import numpy as np
+import math
+from google.colab import files
 
-<script>
-    const brandData = { 1010: "NIKE", 2020: "ADIDAS", 3030: "SNEAKS UP" };
-    const urlData = { 1010: "https://nike.com", 2020: "https://adidas.com", 3030: "https://sneaksup.com" };
+def step2_embed_to_video():
+    print("--- 1. ADIM: Az önce indirdiğin 'nike_muhurlu.png' dosyasını seç ---")
+    up_img = files.upload()
+    if not up_img: return
+    noise_img = cv2.imread(list(up_img.keys())[0])
 
-    function seededRandom(seed) {
-        let x = Math.sin(seed++) * 10000;
-        return x - Math.floor(x);
-    }
+    print("\n--- 2. ADIM: Mühürlenecek Videoyu (MP4/MOV) seç ---")
+    up_vid = files.upload()
+    if not up_vid: return
+    vid_path = list(up_vid.keys())[0]
 
-    let video = document.getElementById('v');
-    let status = document.getElementById('status');
-    let res = document.getElementById('result');
+    # Video Hazırlığı
+    cap = cv2.VideoCapture(vid_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    output_name = 'nike_shop_final.mp4'
+    out = cv2.VideoWriter(output_name, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
 
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then(s => video.srcObject = s);
+    # Esnetmeden tam ortaya yerleştirme ayarları
+    nh, nw, _ = noise_img.shape
+    y_off, x_off = (h - nh) // 2, (w - nw) // 2
+    
+    # Matematiksel İmza
+    noise_sig = (noise_img.astype(np.float32) / 127.5) - 1.0
 
-    cv['onRuntimeInitialized'] = () => {
-        let cap = new cv.VideoCapture(video);
-        let src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
-        let gray = new cv.Mat();
-        let blurred = new cv.Mat();
-        let highFreq = new cv.Mat();
+    STRENGTH = 40  # Okunabilirlik için yüksek şiddet
+    FREQ = 10      # 10Hz Nabız
+
+    print(f"\n🚀 İşlem başladı: {nw}x{nh} boyutundaki mühür esnetilmeden işleniyor...")
+
+    frame_count = 0
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret: break
         
-        function detect() {
-            cap.read(src);
-            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-            // Macro analiz için görüntüyü küçültüyoruz (Böylece büyük noktalar birleşir)
-            let small = new cv.Mat();
-            cv.resize(gray, small, new cv.Size(160, 90)); 
-            small.convertTo(small, cv.CV_32F);
+        pulse = (math.sin(2 * math.pi * FREQ * (frame_count / fps)) + 1) / 2
+        
+        # Sadece merkez bölgeye müdahale et (Esnetme yok!)
+        roi = frame[y_off:y_off+nh, x_off:x_off+nw].astype(np.float32)
+        roi[:,:,0] += noise_sig[:,:,0] * (STRENGTH * pulse) # Mavi
+        roi[:,:,1] -= noise_sig[:,:,1] * (STRENGTH * 0.4 * pulse) # Yeşil denge
+        roi[:,:,2] -= noise_sig[:,:,2] * (STRENGTH * 0.4 * pulse) # Kırmızı denge
+        
+        frame[y_off:y_off+nh, x_off:x_off+nw] = np.clip(roi, 0, 255).astype(np.uint8)
+        out.write(frame)
+        
+        frame_count += 1
+        if frame_count % 150 == 0: print(f"✅ %{int(frame_count/total_frames*100)} bitti...")
 
-            cv.GaussianBlur(small, blurred, new cv.Size(3, 3), 0);
-            cv.subtract(small, blurred, highFreq);
+    cap.release()
+    out.release()
+    print(f"\n🎬 BAŞARILI! Video indiriliyor...")
+    files.download(output_name)
 
-            [1010, 2020, 3030].forEach(seed => {
-                let score = 0;
-                let s = seed;
-                // Sadece merkeze odaklan (40x40 macro alan)
-                for(let i=0; i<40; i++) {
-                    for(let j=0; j<40; j++) {
-                        let maskVal = seededRandom(s++) > 0.5 ? 1 : -1;
-                        score += highFreq.floatPtr(20+i, 60+j)[0] * maskVal;
-                    }
-                }
-
-                if (score > 400) { // MACRO EŞİĞİ
-                    document.getElementById('brand').innerText = brandData[seed];
-                    res.style.display = "block";
-                    document.getElementById('btn').onclick = () => window.open(urlData[seed]);
-                    status.innerText = "TESPİT EDİLDİ!";
-                }
-            });
-            requestAnimationFrame(detect);
-        }
-        detect();
-    };
-</script>
-</body>
-</html>
+step2_embed_to_video()
